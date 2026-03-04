@@ -684,6 +684,19 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       );
       extra += `[config] gateway.trustedProxies exit=${proxiesResult.code}\n`;
 
+      // Enable OpenAI-compatible HTTP API (required for DABOX chat integration)
+      const httpEndpointsResult = await runCmd(
+        OPENCLAW_NODE,
+        clawArgs([
+          "config",
+          "set",
+          "--json",
+          "gateway.http.endpoints",
+          '{"chatCompletions":{"enabled":true}}',
+        ]),
+      );
+      extra += `[config] gateway.http.endpoints exit=${httpEndpointsResult.code}\n`;
+
       if (payload.model?.trim()) {
         extra += `[setup] Setting model to ${payload.model.trim()}...\n`;
         const modelResult = await runCmd(
