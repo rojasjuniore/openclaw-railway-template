@@ -697,6 +697,19 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       );
       extra += `[config] gateway.http.endpoints exit=${httpEndpointsResult.code}\n`;
 
+      // Disable Docker sandbox — Railway containers don't have Docker-in-Docker
+      // Without this, gateway crash-loops with "spawn docker ENOENT" (issue #7586)
+      const sandboxResult = await runCmd(
+        OPENCLAW_NODE,
+        clawArgs([
+          "config",
+          "set",
+          "agents.defaults.sandbox.mode",
+          "off",
+        ]),
+      );
+      extra += `[config] agents.defaults.sandbox.mode=off exit=${sandboxResult.code}\n`;
+
       if (payload.model?.trim()) {
         extra += `[setup] Setting model to ${payload.model.trim()}...\n`;
         const modelResult = await runCmd(
