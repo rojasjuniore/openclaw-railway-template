@@ -217,7 +217,7 @@ async function startGateway() {
   ];
 
   gatewayProc = childProcess.spawn(OPENCLAW_NODE, clawArgs(args), {
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       OPENCLAW_STATE_DIR: STATE_DIR,
@@ -232,6 +232,20 @@ async function startGateway() {
   log.info("gateway", `STATE_DIR: ${STATE_DIR}`);
   log.info("gateway", `WORKSPACE_DIR: ${WORKSPACE_DIR}`);
   log.info("gateway", `config path: ${configPath()}`);
+
+  // Capture gateway stdout/stderr for debugging
+  if (gatewayProc.stdout) {
+    gatewayProc.stdout.on("data", (chunk) => {
+      const lines = chunk.toString().split("\n").filter(Boolean);
+      for (const line of lines) log.info("gw-out", line);
+    });
+  }
+  if (gatewayProc.stderr) {
+    gatewayProc.stderr.on("data", (chunk) => {
+      const lines = chunk.toString().split("\n").filter(Boolean);
+      for (const line of lines) log.error("gw-err", line);
+    });
+  }
 
   gatewayProc.on("error", (err) => {
     log.error("gateway", `spawn error: ${String(err)}`);
