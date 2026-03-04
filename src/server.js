@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 
 import express from "express";
 import httpProxy from "http-proxy";
@@ -1162,6 +1163,71 @@ proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
   proxyReq.setHeader("Origin", GATEWAY_TARGET);
 });
 
+async function forwardChatCompletions(req, res) {
+  try {
+    const upstreamHeaders = {};
+    const skipHeaders = new Set([
+      "host",
+      "connection",
+      "keep-alive",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade",
+      "content-length",
+    ]);
+
+    for (const [rawKey, rawValue] of Object.entries(req.headers)) {
+      const key = rawKey.toLowerCase();
+      if (skipHeaders.has(key) || rawValue == null) continue;
+      upstreamHeaders[key] = Array.isArray(rawValue)
+        ? rawValue.join(", ")
+        : String(rawValue);
+    }
+
+    upstreamHeaders.authorization = `Bearer ${OPENCLAW_GATEWAY_TOKEN}`;
+    upstreamHeaders.origin = GATEWAY_TARGET;
+    upstreamHeaders["content-type"] = "application/json";
+
+    const upstreamRes = await fetch(`${GATEWAY_TARGET}${req.originalUrl}`, {
+      method: "POST",
+      headers: upstreamHeaders,
+      body: JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    res.status(upstreamRes.status);
+    for (const [key, value] of upstreamRes.headers.entries()) {
+      if (skipHeaders.has(key.toLowerCase())) continue;
+      res.setHeader(key, value);
+    }
+
+    if (!upstreamRes.body) {
+      const text = await upstreamRes.text().catch(() => "");
+      res.end(text);
+      return;
+    }
+
+    Readable.fromWeb(upstreamRes.body).pipe(res);
+  } catch (err) {
+    log.error("chat-forward", String(err));
+    if (!res.headersSent) {
+      res.writeHead(503, { "Content-Type": "text/html" });
+      try {
+        const html = fs.readFileSync(
+          path.join(process.cwd(), "src", "public", "loading.html"),
+          "utf8",
+        );
+        res.end(html);
+      } catch {
+        res.end("Gateway unavailable. Retrying...");
+      }
+    }
+  }
+}
+
 app.use(async (req, res) => {
   if (!isConfigured() && !req.path.startsWith("/setup")) {
     return res.redirect("/setup");
@@ -1187,6 +1253,10 @@ app.use(async (req, res) => {
 
   if (req.path === "/openclaw" && !req.query.token) {
     return res.redirect(`/openclaw?token=${OPENCLAW_GATEWAY_TOKEN}`);
+  }
+
+  if (req.method === "POST" && req.path === "/v1/chat/completions") {
+    return forwardChatCompletions(req, res);
   }
 
   return proxy.web(req, res, { target: GATEWAY_TARGET });
